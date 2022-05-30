@@ -1,0 +1,1081 @@
+---
+title:  "Common Visualizations for Hydrology Using R"
+subtitle: "CYHS Workshop - CGU 2022"
+output: 
+  rmdformats::downcute:
+    thumbnails: true
+    lightbox: true
+    gallery: false
+    code_folding: show
+    highlight: tango
+    downcute_theme: chaos
+    includes:
+      after_body: footer.html
+
+---
+```{r, include = FALSE}
+library(tidyverse); library(knitr); library(lubridate); library(dplyr); library(scales); library(ggplot2); library(cowplot); library(tidyhydat);
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+***
+
+**Cody Ross, Postdoctoral Fellow**
+
+For the presentation, supporting code and data: https://github.com/codyalbertross/CGU2022
+
+Please reach me with questions by [email](codyalbertross@ryserson.ca). For more information on projects being carried out at the Black Creek Watershed, check out research led by [Dr. Claire Oswald](https://watershed.geography.ryerson.ca/) and [Dr. Christopher Wellen](http://landandwater.geography.ryerson.ca/).
+
+
+```{r, out.width='10%', fig.align= 'left', echo = FALSE}
+
+knitr::include_graphics('D:/CGU2022/Scripts/tmu_logo.svg')
+```
+
+***
+
+# Data Visualization
+
+In R, there are multiple approaches for constructing visualizations that communicate details about a variety of different data types. Visualizations are most commonly constructed using `base`, `lattice`, or `ggplot2`. 
+
+For this brief workshop, we will be using `ggplot2` with a specific focus on some of the most common visualizations in hydrology. A supplementary guide to `ggplot2` with examples is included in the `ggplot` sub-section of this document. An additional introduction to creating thematic maps in R is also provided.
+
+# Hyetograph-Hydrograph{.tabset}
+
++ **Hyetograph:** a graphical representation of the distribution of rainfall over time. 
+
++ **Hydrograph:** a graphical representation of the distribution of discharge over time. 
+
++ **Hyetograph-Hydrograph:** paired graphical representations of inputs from precipitation and outputs as discharge for a common area and time period. 
+
+## Application
+
+A temporally paired hyetograph-hydrograph for a hillslope or catchment is commonly used to depict critical water movements in water balance studies. On shorter time scales, individual hyetograph-hydrographs are used to show the hydrologic response to a distinct precipitation event. Additionally, at the event-scale, important response characteristics that can provide information about watershed function can be derived from the hyetogprah-hydrograph (e.g., lag-to-rise, lag-to-peak).
+
+```{r, out.width='60%', fig.align= 'left', fig.cap = 'Figure: This event hyetograph-hydrograph is derived from Tang et al. (2017)- https://www.researchgate.net/publication/315660556_HydRun_A_MATLAB_toolbox_for_rainfall-runoff_analysis', echo = FALSE}
+knitr::include_graphics('D:/CGU2022/Scripts/hyetograph-hydrograph.png')
+```
+
+## Example
+
+To illustrate the construction of an event hyetograph-hydrograph, sample rainfall and discharge data from the Black Creek Watershed (Toronto, ON) will be used. 
+
+```{r, out.width='60%', fig.align= 'left', fig.cap = 'Figure: Black Creek (Toronto, ON)', echo = FALSE}
+knitr::include_graphics('D:/CGU2022/Scripts/BC.jpg')
+```
+
+### Rainfall Data
+
+```{r, echo = FALSE}
+
+rainfall <- data.table::fread("D:/CGU2022/Data/Sample_Rainfall.csv")
+
+rainfall <- rainfall %>% add_column(Date = with_tz(ymd_hms(rainfall$Date_Time, tz = 'EST'), tzone = 'UTC'),
+                      Parameter = 'Rainfall',
+                      .before = 'Date_Time') %>%
+  rename(Value = `Thiessen_Polygon_Rainfall(mm)`) %>%
+  select(-Date_Time) %>%
+  filter(month(Date) == 6 & day(Date) %in% 26 & Value > 0)
+
+pillar::glimpse(rainfall)
+head(rainfall)
+
+```
+
+### ggplot Hyetograph
+
+```{r}
+
+R_plot <- ggplot(data = rainfall, aes(x = Date, y = Value)) + 
+  geom_col(color = 'blue', fill = 'blue') + 
+  scale_x_datetime() + 
+  scale_y_reverse() + 
+  labs(y = 'Rainfall (mm)') + 
+  theme_bw()
+
+R_plot
+```
+
+### Discharge Data
+```{r, echo = FALSE}
+
+discharge <- data.table::fread("D:/CGU2022/Data/Sample_Discharge.csv")
+
+discharge <- discharge %>% mutate(Date = ymd_hms(Date, tz = 'UTC')) %>%
+  filter(Parameter == 'Flow') %>%
+  filter(month(Date) == 6 & day(Date) %in% 26:27)
+
+pillar::glimpse(discharge)
+head(discharge)
+```
+
+### ggplot Hydrograph
+
+```{r}
+Q_plot <- ggplot(data = discharge, aes(x = Date, y = Value)) + 
+  geom_area(fill = 'steelblue', alpha = 0.5) +
+  geom_line(color = 'steelblue') +
+  scale_x_datetime() + 
+  scale_y_continuous() + 
+  labs(y = bquote('Discharge ('~m^3~s^-1~')')) + 
+  theme_bw()
+Q_plot
+```
+
+
+### Hyetograph-Hydrograph
+
+There are multiple R packages that combine ggplot objects into a single visualization. Here we vertically combine our hyetograph and hydrograph with 75% of the plot height being occupied by the hydrograph using `grid.arrange()` of the gridExtra package.
+
+```{r}
+gridExtra::grid.arrange(R_plot, Q_plot, heights = c(0.25,0.75))
+```
+
+## Challenges
+
+This visualization may be adequate as an exploratory figure, but there are key problems that need to be resolved for a report or publication. 
+
++ **A:** Distinct x-axis
++ **B:** Inconsistent y-axis Breaks 
++ **C:** Redundant x-axis label
++ **D:** Non-zero axis origins 
++ **E:** Plot frame clips text
++ **F:** Misalignment of the left-hand y-axis frame
+
+Resolving the problems:
+
+```{r, warning = FALSE, message = FALSE}
+# A: specify common x-axis limits
+x_lims <- c(ymd_hm('2021-06-26 00:00'), ymd_hm('2021-06-28 00:00'))
+
+# Hyetograph
+R_plot <- ggplot(data = rainfall, aes(x = Date, y = Value)) + 
+  geom_col(color = 'blue', fill = 'blue') + 
+  scale_x_datetime(limits = x_lims) + # A: specify common x-axis limits
+  scale_y_reverse(limits = c(ceiling(max(rainfall$Value, na.rm = T)),0), # B: set y-axis limit to rounded (up) maximum rainfall amount
+                  breaks = c(ceiling(max(rainfall$Value, na.rm = T)),ceiling(max(rainfall$Value, na.rm = T))/2,0), # B: set y-axis breaks 
+                  expand = c(0,0)) + # D: remove buffer at axis edges 
+  labs(y = 'Rainfall (mm)') + 
+  theme_bw() + 
+  theme(axis.title.x = element_blank(), # C: remove the x-axis title
+        axis.text.x = element_blank(), # C: remove the x-axis tick labels
+        plot.margin = margin(0.25,0.25,0.25,0.25, "cm")) # E: set a common margin to prevent text clipping
+
+# Hydrograph
+Q_plot <- ggplot(data = discharge, aes(x = Date, y = Value)) + 
+  geom_area(fill = 'steelblue', alpha = 0.5) +
+  geom_line(color = 'steelblue') +
+  scale_x_datetime(limits = x_lims) + # A: specify common x-axis limits
+  scale_y_continuous(limits = c(0, ceiling(max(discharge$Value, na.rm = T)/5)*5), expand = c(0,0)) + # B: set y-axis limit to rounded (to nearest # divisible by 5) maximum discharge amount
+  labs(y = bquote('Discharge ('~m^3~s^-1~')')) + 
+  theme_bw() + 
+  theme(axis.title.x = element_blank(),# C: remove the x-axis title
+        plot.margin = margin(0.25,0.25,0.25,0.25, "cm"))# E: set a common margin to prevent text clipping
+
+# Correct alignment, problem F, using cowplot
+Event_plots <- list(R_plot, Q_plot)
+Event_grobs <- lapply(Event_plots, FUN = as_grob)
+Grob_w <- lapply(Event_grobs, function(x) x$widths)
+Grob_aligned <- align_margin(Grob_w, "first")
+for (i in seq_along(Event_plots)) {
+  Event_grobs[[i]]$widths <- Grob_aligned[[i]]
+}
+
+# combine plots with 1:3 vertical ratio, using cowplot
+plot_grid(plotlist = Event_grobs, ncol = 1, rel_heights = c(1,3))
+```
+
+# Sample Coverage{.tabset}
+
+Stream grab and automated samples collected for water-quality monitoring are routinely paired with discharge data. Often times, monitoring logistics and routines lead to bias in the flow conditions that are represented by water-quality samples. The coverage of a water-quality data set is a major consideration in terms of how data can be appropriately used. 
+
+## Application
+
+To critically assess how well a water-quality data set covers the range of observable flow conditions for a particular monitoring station. 
+
++ **Flow Duration Curve (FDC):** a cumulative frequency curve showing the percent of time discharge values were reached or exceeded during a given period. A common visualization for assessing flow conditions. 
+
+By plotting water-quality sample position on the FDC, you can assess if your data set is bias or is suitable for specific research questions. A common problem with long-term data sets is that event conditions of elevated discharge are typically poorly represented. 
+
+## Example
+
+To illustrate the construction of a FDC with paired grab samples, sample daily discharge data (2020) from the Black Creek Watershed (Toronto, ON) and synthetic turbidity data will be used. 
+
+### Importing and Preparing Data
+
+```{r}
+
+set.seed(123) 
+
+# Import example daily flow data (2020) using tidyhydat
+daily_q <- hy_daily_flows(station_number = '02HC027',
+                       start_date = '2020-01-01',
+                       end_date = '2021-01-01')
+
+# Add exceedance probability to flow data using hydroTSM
+daily_q$FDC <- 100*hydroTSM::fdc(daily_q$Value, plot = F)
+
+# Generate synthetic water quality (turbidity)
+turb <- tibble(Date = daily_q$Date[runif(17, min = 1, max = nrow(daily_q))],
+                   Parameter = 'Turbidity',
+                   Value = runif(17, min = 10, max = 500),
+                   Unit = 'FNU')
+
+# Join flow and turbidity data
+fdc_df <- daily_q %>% left_join(turb, by = 'Date') %>%
+  rename(Flow = Value.x,
+         Turbidity = Value.y)
+
+head(fdc_df)
+```
+
+### Constructing ggplot
+```{r}
+ggplot() + 
+    geom_line(data = fdc_df, 
+              aes(x = FDC, y = Flow)) + 
+    geom_point(data = filter(fdc_df, !is.na(Turbidity)), 
+               aes(x = FDC, y = Flow, size = Turbidity), 
+               alpha = 0.5) + 
+    scale_x_continuous(limits = c(0,100), breaks = seq(0,100,by = 25)) +
+    scale_y_log10() + 
+    annotation_logticks(sides = 'l') + 
+    labs(title = 'Grab Sample Coverage',
+         x = 'Exceedance Probability (%)',
+         y = bquote('Discharge ('~m^3~s^-1~')'),
+         size = 'Turbidity (FNU)') + 
+    theme_bw() +
+    theme(legend.position = 'bottom')
+```
+
+# Bottle Picking{.tabset}
+
+The two earlier options are helpful for data sets that you gain access to. The same principals can be applied to an ongoing field campaign to select samples from an automated sampler based on their position on the event hydrograph or on the longer-term FDC. Seeing this information can help prioritize samples in the event that there is a logistic or financial limit to the number of samples being analyzed. 
+
+
+## Example
+
+This example will use the 2020 daily flow data from Black Creek to construct a flow duration curve as well as higher-frequency event discharge data to construct a hydrograph and a sample report from an ISCO 6712 autosample indicating the time stamp of samples collected over a runoff event in the watershed. 
+
+### Importing and Preparing Data
+
+```{r}
+
+# q2_data -----------------------------------------------------------------
+
+# Import example 5-min flow data (last 30 days) using tidyhydat
+event_q <- realtime_dd(station_number = "02HC027")
+
+head(event_q)
+
+# Import sample ISCO 6712 data
+isco <- data.table::fread("D:/CGU2022/Data/Sample_ISCO.csv", skip = 12)
+isco <- isco %>% mutate(V1 = ymd_hm(V1, tz = 'EST'),
+                        V1 = with_tz(V1, tzone = 'UTC'),
+                        V1 = round_date(V1, unit = '5 min')) %>%
+  rename(Date = V1,
+         Flow = V2,
+         Level = V3,
+         Sample = V4) %>%
+  filter(!is.na(Sample))
+
+head(isco)
+
+# Isolate event period and join the sample and flow data
+event_q <- event_q %>% filter(Parameter == 'Flow' &
+                             Date >= ymd_hm('2022-05-16 8:00') & 
+                             Date <= ymd_hm('2022-05-18 12:00')) %>%
+  left_join(select(isco, Date, Sample), by = 'Date') 
+
+event_q <- event_q %>%  mutate(Coverage = ifelse(is.na(Sample), NA, Value))
+
+head(event_q)
+```
+### Plotting Sample Hydrograph Coverage
+
+```{r, warning = FALSE, message = FALSE}
+event_plot <- ggplot(data = event_q, aes(x = Date, y = Value, label = Sample)) + 
+  geom_area(fill = 'steelblue', alpha = 0.5) +
+  geom_line(color = 'steelblue') +
+  geom_point(aes(y = Coverage)) + 
+  scale_x_datetime(limits = c(floor_date(min(event_q$Date))-(3*60*60), # add a buffer to the limits 
+                              ceiling_date(max(event_q$Date))+(6*60*60)),
+                   expand = c(0,0)) + 
+  scale_y_continuous(limits = c(0, ceiling(max(event_q$Value, na.rm = T))), expand = c(0,0)) + 
+  geom_text(hjust=0.5, vjust=-1, color = 'red', size = 2) + 
+  labs(title = 'ISCO Bottle Selection',
+       subtitle = 'Hydrograph Coverage',
+       x = 'Date',
+       y = bquote('Discharge ('~m^3~s^-1~')')) + 
+  theme_bw() 
+
+```
+
+### Plotting Sample FDC Coverage
+```{r, message = FALSE, warning = FALSE}
+
+# manipulate fdc data 
+event_fdc_df <- fdc_df %>% mutate(Sample = NA)
+
+# prepare event data to add fdc
+fdc_event <- event_q %>%
+  filter(!is.na(Sample)) %>%
+  select(STATION_NUMBER, Date, Parameter, Value, Symbol, Sample) %>%
+  rename(Parameter.x = Parameter, 
+         Flow = Value) %>%
+  mutate(Date = date(Date)) %>%
+  add_column(FDC = NA, 
+             Paramter.y = NA,
+             Turbidity = NA,
+             Unit = NA,
+             .after = 'Symbol')
+
+# add event discharge obs to existing fdc
+event_fdc_df <- bind_rows(event_fdc_df, fdc_event)
+event_fdc_df$FDC <- 100*hydroTSM::fdc(event_fdc_df$Flow, plot = F)
+
+# plot fdc
+fdc_plot <- ggplot() + 
+  geom_line(data = event_fdc_df, # fdc line is based on all flow observations in data set
+            aes(x = FDC, y = Flow)) + 
+  geom_point(data = filter(event_fdc_df, !is.na(Turbidity)), # only points with Turbidity data (see above)
+             aes(x = FDC, y = Flow), 
+             alpha = 0.5,
+             size = 2) + 
+  geom_point(data = filter(event_fdc_df, !is.na(Sample)), # only points with event sample
+             aes(x = FDC, y = Flow),
+             alpha = 0.5,
+             size = 2,
+             color = 'red') + 
+  geom_text(data = filter(event_fdc_df, !is.na(Sample)), # add labels to event sample points
+            aes(x = FDC, y = Flow, label= Sample),
+            hjust=0.5, vjust=-1, color = 'red', size = 2) + 
+  scale_x_continuous(limits = c(0,100), breaks = seq(0,100,by = 25)) +
+  scale_y_log10() + 
+  annotation_logticks(sides = 'l') + 
+  labs(title = 'ISCO Bottle Selection',
+       subtitle = 'FDC Coverage',
+       x = 'Exceedance Probability (%)',
+       y = bquote('Discharge ('~m^3~s^-1~')')) + 
+  theme_bw() +
+  theme(legend.position = 'bottom')
+
+gridExtra::grid.arrange(event_plot, fdc_plot, nrow = 2)
+```
+
+***
+
+# ggplot{.tabset}
+
+`ggplot2` is an `R` package for data visualization. It is based on the [Grammar of Graphics](https://www.springer.com/gp/book/9780387245447), which distinguishes it from other approaches. 
+
+`ggplot2` systematically constructs graphics layer-by-layer similar to layer based design software (i.e., inDesign). Graphical rendering occurs in one step: once a graphical object is initialized, the rendering can't be modified, the object has to be re-initialized to see changes.  
+
+`ggplot2` constructs graphics from *data* using descriptions that indicate how the data are mapped to aesthetic attributes. There are five primary *mapping* components:
+
++ **Layers:** geometric elements (*geoms*) and statistical transformations (*stats*) to be applied to the data. *geoms* determine the type of plot displayed (e.g., a scatter plot) and *stats* summarize (e.g., counts) or analyze (e.g., a linear model) the data.
+
++ **Scales:** transcribe data values to the plot aesthetic. Scales draw the axes and legend and exert control over the shape(s), colour(s), and size(s) of graphical elements. 
+
++ **Coordinates:** allows data to be mapped to the graphical plane. The default coordinate system is *Cartesian*, but plotting can also be performed in polar coordinates or map projections.
+
++ **Theme:** allows for plot customization.
+
++ **Facets:** a powerful mechanism for producing plot panels for specific data subsets.
+
+### ggplot Objects - The Basics
+
+At minimum, plotting requires *data*, *aesthetic mapping*, and at least one *geom* (i.e., layer). *aesthetic mapping* ultimately determines which variables of the data will be associated with the components of the ggplot object.
+
+**Install and load ggplot2 and view the mpg data set.**
+```{r, eval = FALSE}
+
+# install the ggplot2 package
+install.packages("ggplot2")
+
+```
+
+```{r}
+
+# load ggplot2
+library("ggplot2")
+# load data
+
+# load mpg data set
+data(mpg)
+
+# preview mpg data set
+pillar::glimpse(mpg)
+```
+
+**A basic ggplot object.**
+```{r}
+
+# city miles per gallon as a function of engine displacement
+ggplot(data = mpg, aes(x = displ, y = cty)) + # ggplot() creates the object
+    geom_line() # line graph layer
+
+
+```
+
++ **Data:** the data set that will be used for the construction of the plot. In the above example, the `mpg` data set was used. `ggplot` requires that the data is a data frame/tibble.
++ **Aesthetic Mapping:** defined in `aes()` the x and y aesthetics are set to the `displ` and `cty` variables.
++ **Geom:** the type of visualization that will be generated from the data and aesthetic mapping. In the above example, the plot has a single layer, `geom_line()` that is added to the plot by `+`. Additional layers can be added in the same way.
+**Note:** the data passed to `ggplot()` should be a data frame or tibble.
+*Notes:* 
++ When data and `aes()` are assigned in `ggplot` they are applied to all layers by default. These variables can be changed or overwritten for subsequent geoms and can also be initially defined in another geom. It is easier/more efficient to define the data and aesthetics in the initial call and to change them by layer when necessary, rather than defining them distinctly for each geom. 
++ Like other objects, a ggplot object can be stored and named using the assignment operator. 
+
+**Demonstrating the alternatives.**
+```{r}
+
+# new plot object with data and aesthetics defined in geom. 
+first_plot <- ggplot() + 
+  geom_line(data = mpg, aes(x = displ, y = cty))
+
+```
+
+### More on Aesthetic Mapping
+
+Plot data can be used to control visualization features beyond the x and y axes. For example, variables in the data can be mapped to the shape, size, color, groups, and fill of the plots geoms. If data variables are mapped to plot aesthetics, those aesthetics will vary by the variables values. Notably, these features can also be changed to fixed values (except for groups), however, this is done outside of the `aes()` function.
+
+There are limitations to aesthetic mapping. For instance, a continuous variable can not be mapped to shape. 
+
+**Use other mpg variables to control additional plot aesthetics.**
+
+```{r}
+
+# preview the variables of mpg
+head(mpg)
+
+# plot
+ggplot(data = mpg, aes(x = displ, y = cty, shape = drv, colour = year)) +
+  geom_point()
+
+```
+
+
+**Note:** The variables that are specified in an aesthetic mapping are associated with a scale. This will be important if these scales need to be customized or constrained in some specific way. When a variable is not mapped to the primary x and y axes, a legend is generated by default.
+
+
+### Titles and Labels
+
+Modifications to titles and variable labels are common, as naming conventions for data in R may not be adequately descriptive for a report or publication. There are multiple ways to modify plot titles and labels, but the primary approach is using `labs()`, which accepts character strings as arguments and is added to a plot like any other geom. 
+
+**Using labs to modify the plot labels.**
+
+```{r}
+
+# plot with better labels
+ggplot(data = mpg, aes(x = displ, y = cty, shape = drv, colour = year)) +
+  geom_point() +
+  labs(title = "Vehicle Fuel Economy",
+       subtitle = "1999-2008",
+       x = "Engine Displacement (l)",
+       y = "City Mileage (mpg)",
+       shape = "Drive Train",
+       colour = "Year")
+
+```
+
+**Note:** `labs()` can also be used to provide a figure `caption` or a text label (using the argument `tag`) to distinguish among plots. It is also worth mentioning that in labs, there is an argument for each plot feature that can me specified via aesthetic mapping (e.g., x, y, shape, colour...).
+
+#### Symbols, Subscripts, and Superscripts
+
+Labels commonly require unique characters and formatting, especially when variables are measured values on a precise or atypical scale. It is important to recall that `labs()` requires character string arguments. As such, there are numerous methods for customizing your labels. Here, I provide some common examples using `bquote()` of `base` R. `expression()` is another function that can be very helpful for customizing plot labels. In the following examples, the labels are meaningless and not actually representative of the data.
+
+**Subscripts and Superscripts.**
+```{r}
+
+# plot with better labels
+ggplot(data = mpg, aes(x = displ, y = cty, shape = drv, colour = year)) +
+  geom_point() +
+  labs(x = bquote("Engine Displacement ("~m^3~s^-1~")"),
+       y = bquote("City Mileage ("~M[pg]~")"))
+
+```
+
+**Symbols.**
+```{r}
+
+# plot with better labels
+ggplot(data = mpg, aes(x = displ, y = cty, shape = drv, colour = year)) +
+  geom_point() +
+  labs(x = bquote("Engine Displacement ("~m^3~s^-1~")"),
+       y = bquote("City Mileage ("*mu~ "mol" ~CO[2]~ m^-2~s^-1*")"))
+
+```
+
+
+## Theme{.tabset}
+
+Themes are used to customize the non-data components of your plots. This includes the titles, labels, grid lines, background, fonts, and legends. Modifications are made using `theme()`, or you can use the characteristics of a complete theme.
+
+### Complete Themes
+
+There are 10 complete themes in ggplot. Basically they are presets with a consistent visual style, they are ascribed to a plot using `+` and take on the following naming conventions `theme_themeName()`: grey, gray, bw, linedraw, light, dark, minimal, classic, void, and test. 
+
+**Default versus the minimal complete theme.**
+```{r}
+
+# plot with default theme
+ggplot(data = mpg, aes(x = displ, y = cty, shape = drv, colour = year)) +
+  geom_point() +
+  labs(x = bquote("Engine Displacement (l)"),
+       y = bquote("City Mileage (mpg)")) 
+
+# plot with minimal complete theme
+ggplot(data = mpg, aes(x = displ, y = cty, shape = drv, colour = year)) +
+  geom_point() +
+  labs(x = "Engine Displacement (l)",
+       y = "City Mileage (mpg)") + 
+  theme_minimal()
+
+
+```
+
+
+### Customization{.tabset}
+
+There are many plot customizations that can be made via `theme()`. There are too many to cover here - see the arguments `?ggplot2::theme`. These arguments represent different features of the plot that can be customized. Broadly speaking, the arguments can be categorized as line, rect, text, or title arguments. These arguments are expressed as `element_line()`, `element_rect()`, `element_text()`, and `element_text()`, respectively. Alternatively, if you want to eliminate one of the plot features, you can make the associated argument equal to `element_blank()`.
+
+**Customize line, rect, text, and title.**
+
+```{r}
+
+# plot with better labels
+ggplot(data = mpg, aes(x = displ, y = cty, shape = drv, colour = year)) +
+  geom_point() +
+  labs(title = "Vehicle Fuel Economy",
+       subtitle = "1999-2008",
+       x = "Engine Displacement (l)",
+       y = "City Mileage (mpg)",
+       shape = "Drive Train",
+       colour = "Year") + 
+  theme(axis.text = element_text(size = 14, angle = 45, color = "red"), # text
+        plot.title = element_text(size = 24, color = "green"), # title
+        axis.title = element_text(size = 12, color = "blue"), # axis title
+        panel.grid = element_blank(), # grid
+        panel.border = element_rect(fill = NA, size = 1, color = "black"), # border
+        panel.background = element_rect(fill = "transparent")) # background
+
+```
+
+## Object Layers - Geoms{.tabset}
+
+### Scatter
+
+`geom_point()` is used to create scatter plots. Generally, scatter plots are most appropriately used to visualize the relationship between two variables, where both variables are continuous. 
+
+*An example using two sets randomly sampled from the uniform distribution.*
+```{r}
+
+# x and y are two independed sets randomly samples from the uniform dist.
+plot_xy <- data.frame(x = runif(1000, 0, 100), y = runif(1000, 0, 100))
+
+
+# plot using geom_point and the bw theme
+ggplot(data = plot_xy, aes(x = x, y = y)) + 
+  geom_point() + # scatter plot
+  theme_bw() # bw theme
+
+
+```
+
+
+### Line{.tabset}
+
+Line plots are similar to scatter plots, except the point data are connected to one another with a line. 
+
+#### Line
+
+`geom_line()` is used to construct line plots. Notably, the `group` aesthetic can be used to form distinct lines when appropriate.
+
+**Distinct lines for cars with different numbers of engine cylinders.**
+```{r}
+
+ggplot(data = mpg, aes(x = displ, y = cty, group = class, color = class)) + # lines are grouped, color is set to same v as group
+  geom_line() + # line plot
+  labs(x = "Engine Displacement (l)",
+       y = "City Mileage (mpg)",
+       color = "Vehicle Class") +
+  theme_bw()
+```
+
+#### Path
+
+`geom_path()` is the same as `geom_line()`, with the exceptions that observations are connected in the order in which they appear in the data. 
+
+#### Smooth
+
+`geom_smooth()` is a type of line plot that is typically used in assisting the visualization of a data pattern. There are a variety of different methods that can be used for smoothing that are associated with a fitting function. Arguments to `geom_smooth()` can vary depending on the fitting function selected, however, it is common to include a confidence interval around the fitted line using the `se` argument.
+
+**Smoothing the mpg data with a linear model and a locally weighted polynomial regression model (loess).**
+```{r}
+
+ggplot(data = mpg, aes(x = displ, y = cty)) +
+  geom_point() + # scatter plot
+  geom_smooth(method = "lm", se = TRUE) + # fit data with linear model
+  geom_smooth(method = "loess", se = TRUE, color = "red") + # fit data with a loess model
+  labs(x = "Engine Displacement (l)",
+       y = "City Mileage (mpg)",
+       color = "Vehicle Class") +
+  theme_bw()
+
+```
+
+#### Fixed Lines
+
+Sometimes adding a fixed line draws attention to a specific data characteristics. For instance, if you wanted to have a fixed horizontal line at 0 for a plot with temperature on the y-axis. 
+
++ `geom_hline()`: a horizontal line with placement specified by the `yintercept` argument.
++ `geom_vline()`: a vertical line with placement specific by the `xintercept` argument.
++ `geom_abline()`: a line that is situated based on `slope` and `intercept` arguments.
+
+*Note:* Multiple lines can be added to each plot with the above geoms by providing a vector to the intercept argument.
+
+**Adding some lines to our last plot.**
+```{r}
+
+ggplot(data = mpg, aes(x = displ, y = cty)) +
+  geom_point() + # scatter plot
+  geom_smooth(method = "lm", se = TRUE) + # fit data with linear model
+  geom_smooth(method = "loess", se = TRUE, color = "red") + # fit data with a loess model
+  geom_hline(yintercept = mean(mpg$cty, na.rm = TRUE)) + 
+  geom_vline(xintercept = mean(mpg$displ, na.rm = TRUE)) + 
+  geom_abline(slope = 2, intercept = 1) + 
+  labs(x = "Engine Displacement (l)",
+       y = "City Mileage (mpg)",
+       color = "Vehicle Class") +
+  theme_bw()
+
+```
+
+
+#### Ribbons
+
+`geom_ribbon()` draws an envelope around a specific variable and is in part controlled by the `ymin` and `ymax` or `xmin` and `xmax` aesthetics.
+
+**Add a ribbon around the line.**
+
+```{r}
+
+ggplot(data = mpg, aes(x = displ, y = cty)) +
+  geom_line() + # line plot
+  geom_ribbon(aes(ymin = cty - 0.2*cty, ymax = cty + 0.2*cty)) + # envelope cty +/- 20% cty
+  labs(x = "Engine Displacement (l)",
+       y = "City Mileage (mpg)",
+       color = "Vehicle Class") +
+  theme_bw()
+
+```
+
+This last figure demonstrates how you should leverage the sequential construction of ggplot and other argument, like alpha for transparency.
+
+**Add a more visible ribbon around the line.**
+
+```{r}
+
+ggplot(data = mpg, aes(x = displ, y = cty)) +
+  geom_ribbon(aes(ymin = cty - 0.2*cty, ymax = cty + 0.2*cty), alpha = 0.5) + # envelope cty +/- 20% cty
+  geom_line(color = "red") + # line plot
+  labs(x = "Engine Displacement (l)",
+       y = "City Mileage (mpg)",
+       color = "Vehicle Class") +
+  theme_bw()
+
+```
+
+### Histograms and Bars
+
+`geom_histogram()` is used to plot the distribution of a continuous variable and `geom_bar()` is used to plot the distribution of a categorical variable. Plots from `geom_histogram()` are affected by the argument `binwidth` that typically defaults to the 30. 
+
+**Create a histogram of the `cty` variable. Modify the binwidth.**
+```{r}
+# distribution of city miles per gallon 
+ggplot(data = mpg, aes(x = cty)) + 
+    geom_histogram(binwidth = 4, colour = "blue", fill = "red") +
+    labs(x = "City Mileage (mpg)") +
+  theme_bw()
+
+```
+
+**Create a bar chart of the `displ` variable.**
+```{r}
+# distribution of the engine displacement 
+ggplot(data = mpg, aes(x = displ)) + 
+    geom_bar(colour = "blue", fill = "red") + 
+  labs(x = "Displacement (l)",
+       y = "Frequncy") +
+  theme_bw()
+
+```
+
+### Boxplot and Violin
+
+`geom_boxplot()` and `geom_violin()` are versions of standard box and whisker plots that are used to visualize the distribution of a variable.
+
+
+**Comparing boxplots and violin for visualizing mpg for different vehicle classes.**
+```{r}
+
+# standard boxplot
+ggplot(data = mpg, aes(x = class, y = cty)) +
+  geom_boxplot() + # boxplot
+  labs(x = "Vehicle Class",
+       y = "City Mileage (mpg)",
+       color = "Vehicle Class") +
+  theme_bw()
+
+# violin
+ggplot(data = mpg, aes(x = class, y = cty)) +
+  geom_violin() + # violin plot
+  labs(x = "Vehicle Class",
+       y = "City Mileage (mpg)",
+       color = "Vehicle Class") +
+  theme_bw()
+
+```
+
+The visualization of boxplots and violin plots are enhanced by adding additional information:
+
+
++ `stat_summary()`: summary statistics.
++ `geom_jitter()`: observations.
+
+**Enhance boxplots.**
+```{r}
+
+# standard boxplot
+ggplot(data = mpg, aes(x = class, y = cty)) +
+  geom_boxplot() + # boxplot
+  geom_jitter(shape = 1, position = position_jitter(0.2)) + # observations
+  stat_summary(fun = mean, na.rm = TRUE, color = "red") + # mean value
+  labs(x = "Vehicle Class",
+       y = "City Mileage (mpg)",
+       color = "Vehicle Class") +
+  theme_bw()
+
+
+```
+
+## Scales{.tabset}
+
+Scales determine how data are mapped to aesthetic like colour, size, position, alpha (transparency), or shape.
+
+### Colour and Fill
+
+There are two components of the intuitive colour aesthetic - `colour` and `fill`. Generally, `fill` defines the colour used for filling, while `colour` defines the colour of the outline.
+
+#### Continuous colour scales
+
+A colour gradient is achieved in `ggplot` using a continuous colour scale - `scale_colour_continuous()`. Similarly, a continuous fill scale is available - `scale_fill_continuous()`.
+
+**Create a scatter plot using the `trees` dataset. The plot should feature Girth on the x-axis, Height on the y-axis and both the colour and size of the points should be associated with the Volume variable.**
+
+```{r}
+
+# load the trees data
+data("trees")
+
+# scatter plot with Girth on x, Height on y, colour and size associated with Volume
+ggplot(data = trees, aes(x = Girth, y = Height)) + 
+    geom_point(aes(colour = Volume, size = Volume)) + 
+    scale_colour_continuous() + # continuous colour scale
+  theme_bw()  
+
+```
+The most popular built-in `ggplot` colour scales are ColorBrewer and viridis that are included in an object using `scale_fill_distiller()` and `scale_fill_viridis_c()`, respectively. Many other colour palettes are available and custom colour schemes can be created using `scale_fill_gradient()` that produces a two colour gradient. Similar functions are available for gradients featuring more than two colours.
+
+
+#### Discrete colour scales
+
+Certain plot types and categorical data require a discrete colour scale (e.g., `scale_fill_discrete()`). Again, a versatile built-in theme for discrete colour scale is `scale_colour_brewer()`. 
+
+
+The automatic results of scales for aesthetics like colour, fill, shape, and size are quite good. These can also be changed manually using `scale_colour_manual()`, `scale_fill_manual()`, `scale_shape_manual()`, and `scale_size_manual()`.
+
+
+**Create a bar chart displaying the count of vehicles with different city miles per gallon. Map the fill and colour aesthetic of the `geom` to the `cyl` variable and associate the fill with a `viridis` colour palette and colour with a manual colour palette.**
+
+```{r, warning = FALSE, message = FALSE}
+
+# load viridis package
+library(viridis)
+# load wesanderson package
+library(wesanderson)
+
+# load the mpg data
+data("mpg")
+
+# make cyl a factor
+mpg <- mpg %>% mutate(cyl = as.factor(cyl))
+
+# create discrete colours from wesanderson
+col <- wes_palette("Zissou1", n = length(levels(mpg$cyl)), type = "discrete")
+
+# bar chart
+ggplot(data = mpg, aes(y = cty)) + 
+    geom_bar(stat = "count", aes(fill = cyl, colour = cyl)) + # fill and colour aesthetics with the cyl variable
+    labs(x = "Frequency",
+       y = "City Mileage (mpg)",
+       fill = "# of Cylinders",
+       colour = "# of Cylinders") +
+    scale_colour_manual(values = col) + # make outline equal to wesanderson discrete palette `col`
+    scale_fill_viridis(discrete = TRUE, option = "A") + # make fill equal to a viridis discrete palette
+  theme_bw()
+    
+```
+
+
+**Note:** In the preceding example, both the fill and colour aesthetics for `geom_bar()` are controlled by the `cyl` variable in the mpg data set. By default, non-axis aesthetics that are associated with a variable (in this case fill and colour) will *each* be given an individual legend. Here, they are combined by giving the fill and colour scales the same name - "# of Cylinders".
+
+
+### Shape
+
+Similar to other plot aesthetics, shape can be mapped to a data variable using `aes()` or can be set as a constant. Since element shape is discrete, mapping to a `factor` variable in the data often works best.
+
+**Create a scatter plot using the mpg data that shows the city mpg on the x-axis, the highway mpg on the y-axis with the `cyl` variable mapped to the shape and the `displ` variable mapped to the size. Use sensible plot titles. **
+
+```{r}
+
+# load mpg
+data(mpg)
+
+# make cyl factor
+mpg$cyl <- factor(mpg$cyl)
+
+ggplot(data = mpg, aes(x = cty, y = hwy, shape = cyl, size = displ)) + 
+    geom_point() + 
+    labs(title = "Miles Per Gallon",
+         subtitle = "Example Plot",
+         x = "City Mileage (mpg)",
+         y = "Highway Mileage (mpg)",
+         size = "Engine Displacement (l)",
+         shape = "Engine Cylinders (#)") + 
+  theme_bw()
+    
+
+```
+
+### Position{.tabset}
+
+Coordinate systems produce a position on the plot based on the data mapped to the x and y aesthetics. Generally, `scale_x_continuous()` and `scale_y_continuous()` are used for continuous numeric variables, while the discrete varieties can be used when a categorical/factor variable is mapped to the x of y aesthetics.
+
+Besides the regular position scales, there are a variety of transformations. For one, a transformation can be specified using the `trans` argument in the continuous scale functions. However, if the desired transformation is common (e.g., log10) built-in transformation scales can be used - `scale_y_log10()`. Other transformations include coordinate reversal `scale_y_reverse()` and the square root transformation `scale_y_sqrt()`.
+
+For the position scales, arguments include name, breaks, labels, limits, and trans.
+
+#### Limits
+
+The limits of a position scale are specified using the `limits` argument where the minimum and maximum are expressed in vector form. `ggplot` will often extend the defined axis limits slightly so that data do not overlap the axis. This feature can eliminated using the `expand` argument.
+
+**Create a scatter plot using the `trees` data showing Girth on the x axis and Height on the y axis. Map the Volume variable to the size aesthetic and set the lower and upper x and y limits to the nearest increment divisible by 5. Remove default scale buffer space from the plot.**
+
+```{r, message = FALSE, warning = FALSE}
+# scatter plot with Girth on x, Height on y, colour and size associated with Volume
+ggplot(data = trees, aes(x = Girth, y = Height)) + 
+    geom_point(aes(size = Volume)) + 
+    scale_x_continuous(name = "Tree Girth",
+                       limits = c(5*round(min(trees$Girth)/5),5*round(max(trees$Girth)/5)),
+                       expand = c(0,0)) + 
+    scale_y_continuous(name = "Tree Height",
+                       limits = c(5*round(min(trees$Height)/5),5*round(max(trees$Height)/5)),
+                       expand = c(0,0)) +
+    scale_size_continuous(name = "Tree Volume") + 
+  theme_bw()
+```
+
+#### Breaks
+
+Once the position scale limits are set, the breaks or tick positions are specified using the breaks argument. Like limits, breaks are specified in vector form. Of course, ggplot has default methods of break selection, but they are certainly adjustable. This may be especially important when the axis range is large, causing the axis to be cluttered by too many breaks.
+
+One package that offers even more flexibility is `scales`. The breaks argument of position scale can be set to a function of scales including `breaks_width()` for equally spaced breaks, `breaks_pretty()` for nicely selected breaks including date and time, and `breaks_extended()` for automatic breaks. `breaks_extended()` mirrors the default approach of `ggplot()` however, it allows for better control of features like the total number of breaks using the n argument. 
+
+**Repeat the last plot, but specify 3 breaks for each position scale.**
+```{r, message = FALSE, warning = FALSE}
+# scatter plot with Girth on x, Height on y, colour and size associated with Volume
+ggplot(data = trees, aes(x = Girth, y = Height)) + 
+    geom_point(aes(size = Volume)) + 
+    scale_x_continuous(name = "Tree Girth",
+                       limits = c(5*round(min(trees$Girth)/5),5*round(max(trees$Girth)/5)),
+                       expand = c(0,0),
+                       scales::breaks_extended(n=3)) + 
+    scale_y_continuous(name = "Tree Height",
+                       limits = c(5*round(min(trees$Height)/5),5*round(max(trees$Height)/5)),
+                       expand = c(0,0),
+                       scales::breaks_extended(n=3)) +
+    scale_size_continuous(name = "Tree Volume") + 
+  theme_bw()
+```
+
+#### Dates
+
+Many plots map date or date/time variables to the x and y aesthetics. In these cases, the `scales` package offers the most versatile control of plot limits and breaks and can be used in the `scale_x_date()` and/or `scale_x_datetime()` layer functions. The two most useful functions from `scales` for this application are `date_breaks()` and `date_format()`.
+
+**Create a scatter plot with the date/time on the x axis and points on the y axis. Make monthly axis breaks that are labeled using the abbreviated name of the month.**
+```{r}
+
+# load the lakers dataset
+data("lakers")
+# modify lakers
+lakers <- lakers %>% mutate(datetime = paste(date, time, sep = ''),
+                            datetime = ymd_hm(datetime))
+
+# Plot
+ggplot(data = lakers, aes(x = datetime, y = points)) + 
+    geom_point() + 
+    scale_x_datetime(breaks = date_breaks("months"),
+                     labels = date_format("%b")) + 
+  theme_bw()
+
+```
+
+## Faceting and Arranging Plots{.tabset}
+
+When using ggplot for data visualization, there are multiple approaches for organizing data into different subplots or combining multiple plots into a single ggplot object.
+
+### Faceting
+
+Faceting allows for multiple panels in a single plot, where each panel is produced in the same way, but applied to a specific subset of the input data. `facet_grid()` forms a matrix of panels that are defined by two faceting variables (rows and columns of the matrix). `facet_grid()` is useful when the data includes two discrete variables and combinations of those variables exist in the data. Alternatively, if one variable is to be plotted and that variable has multiple levels, use `facet_wrap()`.
+
+When using `facet_grid()`, the rows and columns are defined using `vars()` and the variables that the panel matrix should be organized by. Alternatively, this can be expressed as a function using `~`. By default, faceting maintains common axis limits for each panel, however this can be changed using the scales argument in `facet_grid()` or `facet_wrap()`. The scales can be set to "fixed", "free", "free_x", or "free_y". Faceting also allows for the panel labels to be modified using `labeller()`.
+
+Limits and breaks can become more challenging when working with plot facets. When plots are faceted with free axis scales, the position of breaks might be less than desirable. In cases where you would like to provide facet-specific plot limits, `geom_blank()` can be added as a layer. 
+
+**Plot highway mileage from the `mpg` dataset. Facet the highway mileage by the type of drive-train (rows) and the number of cylinders (cols). Adjust the facet variable names to be more descriptive.**
+
+```{r}
+
+# define names variables with the new drv and cyl labels
+drv_names <- c(`4` = "4WD", `f` = "FWD", `r` = "RWD")
+cyl_names <- c(`4`="4 Cyl.",`5`="5 Cyl.",`6`="6 Cyl.",`8`="8 Cyl.")
+
+# create mpg plot faceted by drv and cyl
+ggplot(data = mpg, aes(x = displ, y = hwy)) + 
+    geom_point() + 
+    facet_grid(rows = vars(drv),
+               cols = vars(cyl),
+               labeller = labeller(drv = drv_names, cyl = cyl_names),
+               scales = "free") + 
+    labs(x = "Highway Mileage (mpg)",
+         y = "Engine Displacement (litres)") + 
+  theme_bw()
+```
+
+### Multiple Plots
+
+An alternative to using faceting, which is built into ggplot, is to arrange multiple plots into a single ggplot object. There are a surprisingly large number of packages that facilitate this, each with their own advantages and slight differences in argumentation and options. In particular, we will focus on using `gridExtra`. In `gridExtra` - `grid.arrange()` combines plots and it can be used simply by providing the names of the ggplot objects to be combined (in order) and the desired number of rows and columns. Via the `layout_matrix` argument, the span of each plot in the matrix can be defined.
+
+
+**Make a plot containing 3 panels that are each equal to the `bq` plot. The first plot should occupy 1 row and 3 columns, the second should occupy 1 row and 2 columns and the third should occupy the same row as the second panel but only 1 column.**
+```{r}
+# create mpg plot faceted by drv and cyl
+test_plot <- ggplot(data = mpg, aes(x = displ, y = hwy)) + 
+    geom_point() + 
+    facet_grid(rows = vars(drv),
+               cols = vars(cyl),
+               labeller = labeller(drv = drv_names, cyl = cyl_names),
+               scales = "free") + 
+    labs(x = "Highway Mileage (mpg)",
+         y = "Engine Displacement (litres)") + 
+  theme_bw()
+
+# combine plots
+gridExtra::grid.arrange(test_plot, test_plot, test_plot, ncol = 2, nrow = 2, layout_matrix = cbind(c(1,2),c(1,2),c(1,3)))
+```
+
+## Saving ggplot Objects
+
+A ggplot object assigned to a variable contains all of the elements to reproduce the figure. The ggplot object is similar to a list and individual components of a plot can be accessed using `$`. Like other objects in R, ggplot objects can simply be saved and subsequently loaded as a `.rda` data file. Additionally, a list containing multiple plots can be saved as a data file as well. 
+
+To save a `ggplot` in a visual format, use `ggsave()`. Arguments provided to `ggsave()` include the type of `device` or file format to be used and the file dimensions - `width` and `height` - in specified `units`. The plot resolution can also be specified using the `dpi` argument.
+
+***
+
+# Thematic Maps
+
+In addition to creating visualizations for common data formats, R can be used to portray data spatially. There are a number of packages and functions that are dedicated to spatial data representation , including `mapsf`.
+
+A [thematic map](https://en.wikipedia.org/wiki/Thematic_map) portrays information and patterns of a particular variety for a specific geographic area. Often thematic maps are used to visualize geographic properties/features that are not naturally visible. 
+
+## mapsf{.tabset}
+
+`mapsf` is intended to construct thematic maps that are similar to those from GIS software (e.g., ARC, QGis).
+
+`mapsf` uses [`sf` objects](https://r-spatial.github.io/sf/index.html), which are simple features that are associated with geospatial information. `sf` objects interface with geometrical operations on projected coordinates (GEOS), GDAL, and PROJ for coordinate reference system conversion and transformation. 
+
+`mapsf` functions can be classified into categories of Symbology, Map Layout, and Utility Functions. Much of the content for thematic maps is borrowed from the [`mapsf` website](https://riatelab.github.io/mapsf/articles/mapsf.html) published by Timothee Giraud.
+
+### Symbology
+
+`mf_map()` associates distinct map layers containing information onto a georeferenced plot. The three principal arguments of `mf_map()` are:
+
+* `x`, which is an simple features, `sf`, object;
+* `var`, which includes the name(s) of variable(s) that will be mapped on the target layer;
+* `type`, which is the type of map layer to be constructed.
+
+The features of a map layer can be adjusted using a variety of parameters that mirror those that commonly appear in GIS programs. 
+
+```{r, out.width='100%', fig.align= 'left', fig.cap = 'Figure: This figure is from https://riatelab.github.io/mapsf/articles/mapsf.html - it shows the data requirements for each type of map layer created using mf_map().', echo = FALSE}
+knitr::include_graphics('D:/CGU2022/Scripts/symbology.png')
+```
+
+### Map Layout
+
+The map layout is used for layout features (e.g., north arrow, title, scale, legend) in addition to the cartographic functions.
+
+```{r, echo = FALSE}
+knitr::kable(data.frame(c('mf_title()',
+                          'mf_arrow()',
+                          'mf_credits()',
+                          'mf_scale()',
+                          'mf_layout()',
+                          'mf_annotation()', 
+                          'mf_label()',
+                          'mf_theme()',
+                          'mf_init()',
+                          'mf_shadow()',
+                          'mf_background()',
+                          'mf_legend()',
+                          'mf_inset_on() / mf_inset_off()',
+                          'mf_worldmap()'),
+                        c("add a title",
+                          "add a north arrow",
+                          "include credits including the data source, author, and year",
+                          "plot a scale bar",
+                          "plot a map layout",
+                          "add an annotation to a map",
+                          "place labels on a map",
+                          "defines a map theme",
+                          "initializes map with specific extent",
+                          "add shadow",
+                          "add background",
+                          "add a legend",
+                          "plot an inset object",
+                          "plot a point on the worldmap")),
+                        col.names = c("Function",
+                                      "Description"))
+```
+
+### Utility Functions
+
+Utility functions are dedicated to utility tasks and the creation of spatial objects.
+
+```{r, echo = FALSE}
+knitr::kable(data.frame(c('mf_export()',
+                          'mf_get_line()',
+                          'mf_get_pal()',
+                          'mf_get_breaks()',
+                          'mf_get_mtq()'),
+                        c("export map in raster (.png) or vector formats (.svg)",
+                          "get a link layer",
+                          "get colour palettes",
+                          "get class intervals",
+                          "get the package sample dataset, mtq")),
+                        col.names = c("Function",
+                                      "Description"))
+```
